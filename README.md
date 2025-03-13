@@ -1,6 +1,5 @@
-# Contributing to auto-search-agent
+# LocAgent: Graph-Guided LLM Agents for Code Localization
 
-We welcome contributions from everyone to help improve and expand auto-search-agent. This document outlines the process for contributing to the project.
 
 ## Table of Contents
 1. [Environment Setup](#environment-setup)
