@@ -1,0 +1,151 @@
+DEFAULT: &DEFAULT
+  black_list: [7,8]
+  num_gpus_total: 4
+  num_gpus_to_use: 1
+  heads: 8
+  edge_sampling_ratio: 0.9
+  seed: 0
+  verbose: 2
+  save_model: False
+  save_plot: False
+  val_interval: 1
+
+SHGL: &SHGL
+  model_name: SHGL
+  <<: *DEFAULT
+
+SHGL-ACM-Node: &SHGL-ACM-Node
+  <<: *SHGL
+  nb_epochs: 500
+  lr: 0.0025
+  hid_units: 256
+  hid_units2: 128
+  out_ft: 256
+  g_dim: 64
+  alpha: 100
+  beta: 500
+  gamma: 10
+  eta: 1
+  lambbda: 1
+  edge_rate: 0.9
+
+
+SHGL-DBLP-Node: &SHGL-DBLP-Node
+  <<: *SHGL
+  nb_epochs: 500
+  lr: 0.0005
+  hid_units: 256
+  hid_units2: 512
+  out_ft: 512
+  g_dim: 256
+  g_equidim: 512
+  p_equidim: 256
+  alpha: 200
+  beta: 1000
+  gamma: 1
+  eta: 1
+  lambbda: 1
+  edge_rate: 0.5
+  patience: 30
+
+SHGL-Yelp-Node: &SHGL-Yelp-Node
+  <<: *SHGL
+  nb_epochs: 500
+  lr: 0.0005
+  hid_units: 128
+  hid_units2: 1024
+  out_ft: 128
+  alpha: 1
+  beta: 1
+  gamma: 1
+  eta: 0.5
+  lambbda: 1
+  g_dim: 256
+  edge_rate: 0.8
+
+SHGL-Aminer-Node: &SHGL-Aminer-Node
+  <<: *SHGL
+  nb_epochs: 500
+  lr: 0.0005
+  hid_units: 256
+  hid_units2: 256
+  out_ft: 256
+  alpha: 1
+  beta: 500
+  gamma: 1
+  eta: 5
+  lambbda: 1
+  edge_rate: 0.1
+  g_dim: 256
+  g_equidim: 512
+  p_equidim: 256
+
+SHGL-photo-Node: &SHGL-photo-Node
+  <<: *SHGL
+  nb_epochs: 1000
+  lr: 0.0001
+  hid_units: 512
+  out_ft: 512
+  alpha: 1
+  beta: 500
+  edge_rate: 0.5
+  gamma: 0.1
+  eta: 0.5
+  lambbda: 0.1
+  g_dim: 256
+  g_equidim: 512
+  p_equidim: 256
+  patience: 30
+  dfr: 0.05
+
+SHGL-cs-Node: &SHGL-cs-Node
+  <<: *SHGL
+  nb_epochs: 1000
+  lr: 0.0005
+  hid_units: 256
+  out_ft: 512
+  alpha: 10000
+  beta: 2000
+  edge_rate: 0.5
+  gamma: 10
+  eta: 0.5
+  lambbda: 1
+  g_dim: 256
+  g_equidim: 512
+  p_equidim: 256
+  dfr: 0.05
+
+
+SHGL-physics-Node: &SHGL-physics-Node
+  <<: *SHGL
+  nb_epochs: 1000
+  lr: 0.0005
+  hid_units: 512
+  out_ft: 512
+  alpha: 1
+  beta: 500
+  edge_rate: 0.5
+  gamma: 1
+  eta: 1
+  lambbda: 1
+  g_dim: 256
+  g_equidim: 512
+  p_equidim: 256
+  dfr: 0.05
+
+SHGL-computers-Node: &SHGL-computers-Node
+  <<: *SHGL
+  nb_epochs: 1000
+  lr: 0.00005
+  hid_units: 512
+  out_ft: 1024
+  alpha: 10
+  beta: 10000
+  edge_rate: 0.2
+  gamma: 0.1
+  eta: 50
+  lambbda: 10
+  g_dim: 256
+  g_equidim: 512
+  p_equidim: 256
+  dfr: 0.1
