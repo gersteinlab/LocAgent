@@ -51,3 +51,15 @@ To contribute to *auto-search-agent*, follow these steps to set up your developm
    cd auto-search-agent
    bash scripts/deepseek-v2.5/run.sh
    ```
+
+
+## Cite Us
+
+   ```
+  @article{chen2025locagent,
+  title={LocAgent: Graph-Guided LLM Agents for Code Localization},
+  author={Chen, Zhaoling and Tang, Xiangru and Deng, Gangda and Wu, Fang and Wu, Jialong and Jiang, Zhiwei and Prasanna, Viktor and Cohan, Arman and Wang, Xingyao},
+  journal={arXiv preprint arXiv:2503.09089},
+  year={2025}
+  }
+   ```
