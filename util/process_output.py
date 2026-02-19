@@ -34,8 +34,8 @@ def parse_raw_loc_output(raw_output, valid_files):
         if not line:
             continue  # Skip empty lines
 
-        if line.endswith('.py'):
-            fn = extract_python_file_path(line, valid_top_folder)
+        if any(line.endswith(ext) for ext in _valid_extensions(valid_files)) or '/' in line:
+            fn = extract_file_path(line, valid_top_folder, valid_files)
             if not fn or fn not in valid_files:
                 current_file = None
                 continue
@@ -58,10 +58,13 @@ def parse_raw_loc_output(raw_output, valid_files):
     return file_list, loc_edit_list
 
 
-def get_loc_results_from_raw_outputs(instance_id, raw_outputs, include_variable=False):
-    G = pickle.load(
-            open(f"{GRAPH_INDEX_DIR}/{instance_id}.pkl", "rb")
-        )
+def get_loc_results_from_raw_outputs(instance_id, raw_outputs, include_variable=False, graph=None):
+    if graph is None:
+        if instance_id is None:
+            raise ValueError("instance_id is required when graph is not provided")
+        G = pickle.load(open(f"{GRAPH_INDEX_DIR}/{instance_id}.pkl", "rb"))
+    else:
+        G = graph
     searcher = RepoEntitySearcher(G)
     all_files = searcher.get_all_nodes_by_type(NODE_TYPE_FILE)
     valid_files = [file['name'] for file in all_files]
@@ -101,37 +104,46 @@ def get_loc_results_from_raw_outputs(instance_id, raw_outputs, include_variable=
     return all_found_files, all_found_modules, all_found_entities
 
 
-def extract_python_file_path(line, valid_folders):
+def _valid_extensions(valid_files):
+    exts = set()
+    for fn in valid_files:
+        if '.' in fn:
+            exts.add('.' + fn.split('.')[-1])
+    return exts or {'.py'}
+
+
+def extract_file_path(line, valid_folders, valid_files):
     """
-    Extracts the Python file path from a given line of text.
+    Extracts a file path from a given line of text.
 
     Parameters:
-    - line (str): A line of text that may contain a Python file path.
+    - line (str): A line of text that may contain a file path.
+    - valid_folders (list[str]): Top-level folders that are valid for the repo.
+    - valid_files (list[str]): Full valid file paths.
 
     Returns:
-    - str or None: The extracted Python file path if found; otherwise, None.
+    - str or None: The extracted file path if found; otherwise, None.
     """
-    # Define a regular expression pattern to match file paths ending with .py
-    # The pattern looks for sequences of characters that can include letters, numbers,
-    # underscores, hyphens, dots, or slashes, ending with '.py'
-    pattern = r'[\w\./-]+\.py'
+    exts = _valid_extensions(valid_files)
+    ext_pattern = '|'.join(re.escape(ext) for ext in sorted(exts))
+    pattern = rf'[\\w\\./-]+(?:{ext_pattern})'
 
-    # Search for the pattern in the line
     match = re.search(pattern, line)
-
-    if match:
-        matched_fp = match.group(0)
-        start_index = len(matched_fp)
-        for folder in valid_folders:
-            if f'{folder}/' in matched_fp:
-                cur_start_index = matched_fp.index(f'{folder}/')
-                if cur_start_index < start_index:
-                    start_index = cur_start_index
-        if start_index < len(matched_fp):
-            return matched_fp[start_index:] # Return the max matched file path
+    if not match:
         return None
-    else:
-        return None  # Return None if no match is found
+
+    matched_fp = match.group(0)
+    start_index = len(matched_fp)
+    for folder in valid_folders:
+        if f'{folder}/' in matched_fp:
+            cur_start_index = matched_fp.index(f'{folder}/')
+            if cur_start_index < start_index:
+                start_index = cur_start_index
+    candidate = matched_fp[start_index:] if start_index < len(matched_fp) else matched_fp
+
+    if candidate in valid_files:
+        return candidate
+    return None
 
 
 def merge_sample_locations(found_files, found_modules, found_entities, ranking_method='majority'):

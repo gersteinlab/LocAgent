@@ -4,12 +4,10 @@ import json
 import logging
 import logging.handlers
 import time
-import toml
 from queue import Empty
 from typing import List
-from tqdm import tqdm
 from copy import deepcopy
-from datasets import load_dataset
+from util.config import load_config
 
 from util.runtime.execute_ipython import execute_ipython
 from util.runtime import function_calling
@@ -36,7 +34,6 @@ from plugins.location_tools.repo_ops.repo_ops import (
 import litellm
 from litellm import Message as LiteLLMMessage
 from openai import APITimeoutError
-from evaluation.eval_metric import filtered_instances
 
 
 from time import sleep
@@ -51,23 +48,61 @@ from util.runtime.fn_call_converter import (
 # os.environ['LITELLM_LOG'] = 'DEBUG
 
 
-def filter_dataset(dataset, filter_column: str, used_list: str):
-    file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.toml')
-    if os.path.exists(file_path):
-        with open(file_path, 'r') as file:
-            data = toml.load(file)
-            if used_list in data:
-                selected_ids = data[used_list]
-                logging.info(
-                    f'Filtering {len(selected_ids)} tasks from "selected_ids"...'
-                )
-                def filter_function(example):
-                    return example[filter_column] in selected_ids  # Replace 'id' with the actual field name in the dataset
-                filtered_dataset = dataset.filter(filter_function)
-                # subset = dataset[dataset[filter_column].isin(selected_ids)]
-                logging.info(f'Retained {len(filtered_dataset)} tasks after filtering')
-                return filtered_dataset
-    return dataset
+_LLM_CONFIG = None
+
+
+def _get_llm_config() -> dict:
+    global _LLM_CONFIG
+    if _LLM_CONFIG is None:
+        _LLM_CONFIG, _ = load_config()
+    return _LLM_CONFIG
+
+
+def _is_nim_model(model_name: str) -> bool:
+    return model_name.startswith('nvidia_nim/')
+
+
+def _resolve_api_config(model_name: str, config: dict):
+    api_base = None
+    api_key = None
+    if _is_nim_model(model_name):
+        api_base = config.get('nim_api_base', 'https://integrate.api.nvidia.com/v1')
+        api_key = os.getenv(config.get('api_key_env', 'NVIDIA_API_KEY'))
+    return api_base, api_key
+
+
+def _resolve_fallback_config(config: dict):
+    fallback_model = config.get('fallback_model')
+    fallback_base = os.getenv('OPENAI_API_BASE')
+    fallback_key = os.getenv('OPENAI_API_KEY')
+    if fallback_model and fallback_key:
+        return fallback_model, fallback_base, fallback_key
+    return None, None, None
+
+
+def _completion_with_retry(model_name: str, **kwargs):
+    config = _get_llm_config()
+    max_retries = int(config.get('max_retries', 3))
+    backoff = float(config.get('retry_backoff_sec', 2))
+    api_base, api_key = _resolve_api_config(model_name, config)
+
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            return litellm.completion(model=model_name, api_base=api_base, api_key=api_key, **kwargs)
+        except Exception as exc:
+            last_error = exc
+            if attempt < max_retries - 1:
+                sleep(backoff * (2 ** attempt))
+                continue
+
+    fallback_model, fallback_base, fallback_key = _resolve_fallback_config(config)
+    if _is_nim_model(model_name) and fallback_model:
+        return litellm.completion(model=fallback_model, api_base=fallback_base, api_key=fallback_key, **kwargs)
+
+    if last_error:
+        raise last_error
+    raise RuntimeError('LLM completion failed without an exception.')
 
 
 def get_task_instruction(instance: dict, task: str = 'auto_search', include_pr=False, include_hint=False):
@@ -160,23 +195,23 @@ def auto_search_process(result_queue,
             # new conversation
             if tools and ('hosted_vllm' in model_name or 'qwen' in model_name.lower()):
                 messages = convert_fncall_messages_to_non_fncall_messages(messages, tools, add_in_context_learning_example=False)
-                response = litellm.completion(
-                    model=model_name,
-                    temperature=temp, top_p=0.8, repetition_penalty=1.05, 
+                response = _completion_with_retry(
+                    model_name,
+                    temperature=temp, top_p=0.8, repetition_penalty=1.05,
                     messages=messages,
                     stop=NON_FNCALL_STOP_WORDS
                 )
             elif tools:
-                response = litellm.completion(
-                    model=model_name,
+                response = _completion_with_retry(
+                    model_name,
                     tools=tools,
                     messages=messages,
                     temperature=temp,
                     # stop=['</execute_ipython>'], #</finish>',
                 )
             else:
-                response = litellm.completion(
-                    model=model_name,
+                response = _completion_with_retry(
+                    model_name,
                     messages=messages,
                     temperature=temp,
                     stop=['</execute_ipython>'], #</finish>',
@@ -480,173 +515,3 @@ def run_localize(rank, args, bug_queue, log_queue, output_file_lock, traj_file_l
                 append_to_jsonl(loc_res, traj_file)
 
         reset_current_issue()
-
-
-def localize(args):
-    bench_data = load_dataset(args.dataset, split=args.split)
-    bench_tests = filter_dataset(bench_data, 'instance_id', args.used_list)
-    if args.eval_n_limit:
-        eval_n_limit = min(args.eval_n_limit, len(bench_tests))
-        bench_tests = bench_tests.select(range(0, eval_n_limit))
-        logging.info(f'Limiting evaluation to first {eval_n_limit} instances.')
-
-    manager = mp.Manager()
-    queue = manager.Queue()
-    output_file_lock, traj_file_lock = manager.Lock(), manager.Lock()
-
-    # collect processed instances
-    processed_instance = []
-    if os.path.exists(args.output_file):
-        traj_file = os.path.join(args.output_folder, 'loc_trajs.jsonl')
-        locs = load_jsonl(args.output_file)        
-        if args.rerun_empty_location:
-            traj_datas = load_jsonl(traj_file)
-            backup_loc_output = backup_file(args.output_file)
-            backup_traj_output = backup_file(traj_file)
-            clear_file(args.output_file)
-            clear_file(traj_file)
-            for loc in locs:
-                if loc['found_files'] != [[]]:
-                    append_to_jsonl(loc, args.output_file)
-                    processed_instance.append(loc['instance_id'])
-                    
-            for loc_traj in traj_datas:
-                if loc_traj['found_files'] != [[]]:
-                    append_to_jsonl(loc_traj, traj_file)
-        else:
-            processed_instance = [loc['instance_id'] for loc in locs]
-    
-    num_bugs = 0
-    for bug in bench_tests:
-        instance_id = bug["instance_id"]
-        if instance_id in processed_instance:
-        # if instance_id in processed_instance or instance_id in filtered_instances:
-            print(f"instance {instance_id} has already been processed, skip.")
-        else:
-            queue.put(bug)
-            num_bugs += 1
-
-    log_queue = manager.Queue()
-    queue_listener = logging.handlers.QueueListener(log_queue, *logging.getLogger().handlers)
-    queue_listener.start()
-    mp.spawn(
-        run_localize,
-        nprocs=min(num_bugs, args.num_processes) if args.num_processes > 0 else num_bugs,
-        args=(args, queue, log_queue, output_file_lock, traj_file_lock),
-        join=True
-    )
-    queue_listener.stop()
-    
-    if args.rerun_empty_location:
-        try:
-            delete_file(backup_loc_output)
-            delete_file(backup_traj_output)
-        except:
-            return
-
-
-def merge(args):
-    args.merge_file = os.path.join(args.output_folder, 'merged_' + os.path.basename(args.output_file))
-    
-    if args.ranking_method == 'mrr':
-        args.merge_file = args.merge_file.replace('.jsonl', f'_{args.ranking_method}.jsonl')
-        
-    clear_file(args.merge_file)
-    with open(args.output_file, 'r') as file:
-        for line in file:
-            loc_data = json.loads(line)
-            if loc_data['found_files'] == [[]]:
-                loc_data['found_files'] = []
-                loc_data['found_modules'] = []
-                loc_data['found_entities'] = []
-            else:
-                loc_data['found_files'] = loc_data['found_files']
-                loc_data['found_modules'] = loc_data['found_modules']
-                loc_data['found_entities'] = loc_data['found_entities']
-                ranked_files, ranked_modules, ranked_funcs = merge_sample_locations(loc_data['found_files'], 
-                                                                    loc_data['found_modules'],
-                                                                    loc_data['found_entities'],
-                                                                    ranking_method=args.ranking_method,
-                                                                    )
-                loc_data['found_files'] = ranked_files
-                loc_data['found_modules'] = ranked_modules
-                loc_data['found_entities'] = ranked_funcs
-            with open(args.merge_file, 'a') as f:
-                f.write(json.dumps(loc_data) + '\n')
-
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--localize", action="store_true")
-    parser.add_argument("--merge", action="store_true")
-    parser.add_argument("--use_example", action="store_true")
-    parser.add_argument("--ranking_method", type=str, default='mrr',
-                        choices=['mrr', 'majority'])
-    
-    parser.add_argument("--dataset", type=str, default="princeton-nlp/SWE-bench_Lite")
-    parser.add_argument("--split", type=str, default="test")
-    parser.add_argument("--eval_n_limit", type=int, default=0)
-    parser.add_argument("--used_list", type=str, default='selected_ids')
-    
-    parser.add_argument("--output_folder", type=str, required=True)
-    parser.add_argument("--output_file", type=str, default="loc_outputs.jsonl")
-    parser.add_argument("--merge_file", type=str, default="merged_loc_outputs.jsonl")
-    
-    parser.add_argument(
-        "--model", type=str,
-        default="openai/gpt-4o-2024-05-13",
-        choices=["gpt-4o", 
-                 "azure/gpt-4o", "openai/gpt-4o-2024-05-13",
-                 "deepseek/deepseek-chat", "deepseek-ai/DeepSeek-R1",
-                 "litellm_proxy/claude-3-5-sonnet-20241022", "litellm_proxy/gpt-4o-2024-05-13", "litellm_proxy/o3-mini-2025-01-31",
-                 # fine-tuned model
-                 "openai/qwen-7B", "openai/qwen-7B-128k", "openai/ft-qwen-7B", "openai/ft-qwen-7B-128k",
-                 "openai/qwen-32B", "openai/qwen-32B-128k", "openai/ft-qwen-32B", "openai/ft-qwen-32B-128k",
-        ]
-    )
-    parser.add_argument("--use_function_calling", action="store_true",
-                        help='Enable function calling features of LLMs. If disabled, codeact will be used to support function calling.')
-    parser.add_argument("--simple_desc", action="store_true", 
-                        help="Use simplified function descriptions due to certain LLM limitations. Set to False for better performance when using Claude.")
-    
-    parser.add_argument("--max_attempt_num", type=int, default=1, 
-                        help='Only use in generating training trajectories.')
-    parser.add_argument("--num_samples", type=int, default=2)
-    parser.add_argument("--num_processes", type=int, default=-1)
-    
-    parser.add_argument("--log_level", type=str, default='INFO')
-    parser.add_argument("--timeout", type=int, default=900)
-    parser.add_argument("--rerun_empty_location", action="store_true")
-    args = parser.parse_args()
-
-    args.output_file = os.path.join(args.output_folder, args.output_file)
-    os.makedirs(args.output_folder, exist_ok=True)
-
-    # write the arguments
-    with open(f"{args.output_folder}/args.json", "w") as f:
-        json.dump(vars(args), f, indent=4)
-
-    logging.basicConfig(
-        level=logging.getLevelName(args.log_level),
-        format="%(asctime)s %(filename)s %(levelname)s %(message)s",
-        datefmt='%Y-%m-%d %H:%M:%S',
-        handlers=[
-            logging.FileHandler(f"{args.output_folder}/localize.log"),
-            logging.StreamHandler()
-        ]
-    )
-    
-    if args.localize:
-        localize(args)
-    
-    
-    if args.merge:
-        merge(args)
-
-
-if __name__ == "__main__":
-
-    start_time = time.time()
-    main()
-    end_time = time.time()
-    logging.info("Total time: {:.4f} min".format((end_time - start_time)/60))

@@ -12,9 +12,29 @@ from dependency_graph.build_graph import (
 
 def is_test_file(nid):
     # input node id (e.g., 'tests/_core.py:test') and output whether it belongs to a test file
-    file_path = nid.split(':')[0]
-    word_list = re.split(r" |_|\/", file_path.lower())  # split by ' ', '_', and '/'
-    return any([word.startswith('test') for word in word_list])
+    file_path = nid.split(':', 1)[0].replace('\\', '/')
+    lower_path = file_path.lower()
+    name = lower_path.split('/')[-1]
+
+    if '/tests/' in lower_path or lower_path.startswith('tests/'):
+        return True
+    if '/test/' in lower_path or lower_path.startswith('test/'):
+        return True
+    if '/__tests__/' in lower_path:
+        return True
+    if '/src/test/' in lower_path:
+        return True
+    if name.startswith('test_') and name.endswith('.py'):
+        return True
+    if name.endswith('_test.py') or name.endswith('_test.go'):
+        return True
+    if name.endswith('.test.ts') or name.endswith('.spec.ts'):
+        return True
+    if name.endswith('.test.js') or name.endswith('.spec.js'):
+        return True
+    if name.endswith('test.java'):
+        return True
+    return False
 
 
 def wrap_code_snippet(code_snippet, start_line, end_line):
@@ -63,16 +83,16 @@ class RepoEntitySearcher:
             _global_name_dict = defaultdict(list)
             for nid in self.G.nodes():
                 if is_test_file(nid): continue
-
-                if nid.endswith('.py'):
+                ntype = self.G.nodes[nid].get('type')
+                if ntype == NODE_TYPE_FILE:
                     fname = nid.split('/')[-1]
                     _global_name_dict[fname].append(nid)
 
-                    name = nid[:-(len('.py'))].split('/')[-1]
-                    _global_name_dict[name].append(nid)
+                    base = fname.rsplit('.', 1)[0] if '.' in fname else fname
+                    _global_name_dict[base].append(nid)
 
                 elif ':' in nid:
-                    name = nid.split(':')[-1].split('.')[-1]
+                    name = nid.split(':', 1)[1].split('.')[-1]
                     _global_name_dict[name].append(nid)
 
             self._global_name_dict = _global_name_dict
@@ -85,16 +105,16 @@ class RepoEntitySearcher:
             _global_name_dict_lowercase = defaultdict(list)
             for nid in self.G.nodes():
                 if is_test_file(nid): continue
-
-                if nid.endswith('.py'):
+                ntype = self.G.nodes[nid].get('type')
+                if ntype == NODE_TYPE_FILE:
                     fname = nid.split('/')[-1].lower()
                     _global_name_dict_lowercase[fname].append(nid)
 
-                    name = nid[:-(len('.py'))].split('/')[-1].lower()
-                    _global_name_dict_lowercase[name].append(nid)
+                    base = fname.rsplit('.', 1)[0] if '.' in fname else fname
+                    _global_name_dict_lowercase[base].append(nid)
 
                 elif ':' in nid:
-                    name = nid.split(':')[-1].split('.')[-1].lower()
+                    name = nid.split(':', 1)[1].split('.')[-1].lower()
                     _global_name_dict_lowercase[name].append(nid)
 
             self._global_name_dict_lowercase = _global_name_dict_lowercase
@@ -161,8 +181,8 @@ class RepoEntitySearcher:
                     }
                 elif type == NODE_TYPE_FUNCTION:
                     formatted_data = {
-                        'name': nid.split(':')[-1],
-                        'file': nid.split(':')[0],
+                        'name': nid.split(':', 1)[-1],
+                        'file': nid.split(':', 1)[0],
                         'type': node_data['type'],
                         'content': node_data.get('code', '').split('\n'),
                         'start_line': node_data.get('start_line', 0),
@@ -170,8 +190,8 @@ class RepoEntitySearcher:
                     }
                 elif type == NODE_TYPE_CLASS:
                     formatted_data = {
-                        'name': nid.split(':')[-1],
-                        'file': nid.split(':')[0],
+                        'name': nid.split(':', 1)[-1],
+                        'file': nid.split(':', 1)[0],
                         'type': node_data['type'],
                         'content': node_data.get('code', '').split('\n'),
                         'start_line': node_data.get('start_line', 0),
@@ -185,8 +205,9 @@ class RepoEntitySearcher:
                     formatted_methods = []
                     for mid in methods:
                         mnode = self.G.nodes[mid]
+                        method_name = mid.split(':', 1)[-1].split('.')[-1]
                         formatted_methods.append({
-                            'name': mid.split('.')[-1],
+                            'name': method_name,
                             'start_line': mnode.get('start_line', 0),
                             'end_line': mnode.get('end_line', 0),
                         })

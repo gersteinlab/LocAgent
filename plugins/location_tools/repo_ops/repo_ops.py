@@ -118,6 +118,46 @@ def reset_current_issue():
     REPO_SAVE_DIR = None
 
 
+def set_current_repo(repo_path: str, graph_index_path: str):
+    """Initialize the global graph/searcher state from a local repo + graph index.
+
+    This is used by the bicameral_locagent CLI to work on any codebase (not SWE-bench).
+    """
+    global CURRENT_ISSUE_ID, CURRENT_INSTANCE
+    global ALL_FILE, ALL_CLASS, ALL_FUNC
+    global DP_GRAPH_ENTITY_SEARCHER, DP_GRAPH_DEPENDENCY_SEARCHER, DP_GRAPH
+    global REPO_SAVE_DIR
+
+    CURRENT_ISSUE_ID = None
+    CURRENT_INSTANCE = {'repo': repo_path}
+    REPO_SAVE_DIR = repo_path
+
+    G = pickle.load(open(graph_index_path, "rb"))
+    DP_GRAPH_ENTITY_SEARCHER = RepoEntitySearcher(G)
+    DP_GRAPH_DEPENDENCY_SEARCHER = RepoDependencySearcher(G)
+    DP_GRAPH = G
+
+    ALL_FILE = DP_GRAPH_ENTITY_SEARCHER.get_all_nodes_by_type(NODE_TYPE_FILE)
+    ALL_CLASS = DP_GRAPH_ENTITY_SEARCHER.get_all_nodes_by_type(NODE_TYPE_CLASS)
+    ALL_FUNC = DP_GRAPH_ENTITY_SEARCHER.get_all_nodes_by_type(NODE_TYPE_FUNCTION)
+
+
+def reset_current_repo():
+    """Reset repo-local state without deleting any local repo."""
+    global CURRENT_ISSUE_ID, CURRENT_INSTANCE
+    global ALL_FILE, ALL_CLASS, ALL_FUNC
+    global DP_GRAPH_ENTITY_SEARCHER, DP_GRAPH_DEPENDENCY_SEARCHER, DP_GRAPH
+    global REPO_SAVE_DIR
+
+    CURRENT_ISSUE_ID = None
+    CURRENT_INSTANCE = None
+    ALL_FILE, ALL_CLASS, ALL_FUNC = None, None, None
+    DP_GRAPH_ENTITY_SEARCHER = None
+    DP_GRAPH_DEPENDENCY_SEARCHER = None
+    DP_GRAPH = None
+    REPO_SAVE_DIR = None
+
+
 def get_current_issue_id():
     global CURRENT_ISSUE_ID
     return CURRENT_ISSUE_ID
@@ -490,10 +530,11 @@ def rank_and_aggr_query_results(query_results, fixed_query_info_list):
 def search_code_snippets(
         search_terms: Optional[List[str]] = None,
         line_nums: Optional[List] = None,
-        file_path_or_pattern: Optional[str] = "**/*.py",
+        file_path_or_pattern: Optional[str] = "**/*",
 ) -> str:
     """Searches the codebase to retrieve relevant code snippets based on given queries(terms or line numbers).
     
+    This tool supports multilingual repositories (TypeScript, JavaScript, Python, Java, Go, Rust, C#).
     This function supports retrieving the complete content of a code entity, 
     searching for code entities such as classes or functions by keywords, or locating specific lines within a file. 
     It also supports filtering searches based on a file path or file pattern.
@@ -518,7 +559,7 @@ def search_code_snippets(
             When provided, `file_path_or_pattern` must specify a valid file path.
         
         file_path_or_pattern (Optional[str]): A glob pattern or specific file path used to filter search results 
-            to particular files or directories. Defaults to '**/*.py', meaning all Python files are searched by default.
+            to particular files or directories. Defaults to '**/*', meaning all indexed source files are searched by default.
             If `line_nums` are provided, this must specify a specific file path.
 
     Returns:
@@ -536,7 +577,7 @@ def search_code_snippets(
         result = search_code_snippets(line_nums=[10, 15], file_path_or_pattern='src/example.py')
         
         # Combined search for a module name and within a specific file pattern
-        result = search_code_snippets(search_terms=["MyClass"], file_path_or_pattern="src/**/*.py")
+        result = search_code_snippets(search_terms=["MyClass"], file_path_or_pattern="src/**/*")
     """
     
     files, _, _ = get_current_repo_modules()
@@ -751,6 +792,8 @@ def bm25_content_retrieve(
 ) -> str:
     """Retrieves code snippets from the codebase using the BM25 algorithm based on the provided query, class names, and function names. This function helps in finding relevant code sections that match specific criteria, aiding in code analysis and understanding.
 
+    This tool supports multilingual repositories (TypeScript, JavaScript, Python, Java, Go, Rust, C#).
+
     Args:
         query (Optional[str]): A textual query to search for relevant code snippets. Defaults to an empty string if not provided.
         class_names (list[str]): A list of class names to include in the search query. If None, class names are not included.
@@ -764,15 +807,23 @@ def bm25_content_retrieve(
 
     instance = get_current_issue_data()
     query = query_info.term
-    
-    persist_path = os.path.join(BM25_INDEX_DIR, instance["instance_id"])
+    repo_dir = get_repo_save_dir()
+
+    if instance and instance.get("instance_id"):
+        persist_path = os.path.join(BM25_INDEX_DIR, instance["instance_id"])
+    else:
+        persist_path = os.path.join(BM25_INDEX_DIR, "local_repo")
+
     if os.path.exists(f'{persist_path}/corpus.jsonl'):
         # TODO: if similairy_top_k > cache's setting, then regenerate
         retriever = load_retriever(persist_path)
     else:
-        repo_playground = get_repo_save_dir()
-        repo_dir = setup_repo(instance_data=instance, repo_base_dir=repo_playground, dataset=None, split=None)
-        absolute_repo_dir = os.path.abspath(repo_dir)
+        if instance and instance.get("instance_id"):
+            repo_playground = repo_dir
+            repo_dir = setup_repo(instance_data=instance, repo_base_dir=repo_playground, dataset=None, split=None)
+        absolute_repo_dir = os.path.abspath(repo_dir) if repo_dir else None
+        if not absolute_repo_dir:
+            return ""
         retriever = build_code_retriever(absolute_repo_dir, persist_path=persist_path,
                                          similarity_top_k=similarity_top_k)
 
@@ -944,15 +995,9 @@ def explore_graph_structure(
         # edge_type_filter: Optional[List[str]] = None,
         # return_code_content: bool = False,
 ):
-    """
-    Args:
-        start_entities:
-        direction:
-        traversal_depth:
-        entity_type_filter:
-        dependency_type_filter:
+    """Explore relationships between entities in a multilingual code graph.
 
-    Returns:
+    This tool works on repositories in TypeScript, JavaScript, Python, Java, Go, Rust, and C#.
     """
     start_entities, hints = _validate_graph_explorer_inputs(start_entities, direction, traversal_depth,
                                             entity_type_filter, dependency_type_filter)
@@ -975,6 +1020,7 @@ def explore_tree_structure(
 ):
     """Analyzes and displays the dependency structure around specified entities in a code graph.
 
+    This tool supports multilingual repositories (TypeScript, JavaScript, Python, Java, Go, Rust, C#).
     This function searches and presents relationships and dependencies for the specified entities (such as classes, functions, files, or directories) in a code graph.
     It explores how the input entities relate to others, using defined types of dependencies, including 'contains', 'imports', 'invokes' and 'inherits'.
     The search can be controlled to traverse upstream (exploring dependencies that entities rely on) or downstream (exploring how entities impact others), with optional limits on traversal depth and filters for entity and dependency types.
@@ -983,7 +1029,7 @@ def explore_tree_structure(
     1. Exploring Outward Dependencies:
         ```
         get_local_structure(
-            start_entities=['src/module_a.py:ClassA'],
+            start_entities=['src/module_a.ts:ClassA'],
             direction='downstream',
             traversal_depth=2,
             entity_type_filter=['class', 'function'],
@@ -995,7 +1041,7 @@ def explore_tree_structure(
     2. Exploring Inward Dependencies:
         ```
         get_local_structure(
-            start_entities=['src/module_b.py:FunctionY'],
+            start_entities=['src/module_b.ts:FunctionY'],
             direction='upstream',
             traversal_depth=-1
         )

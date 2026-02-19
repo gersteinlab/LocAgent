@@ -1,4 +1,3 @@
-from datasets import load_dataset
 import os
 import fnmatch
 from collections import defaultdict
@@ -7,10 +6,8 @@ from util.benchmark.setup_repo import setup_repo
 
 
 # SET THIS IF YOU WANT TO USE THE PREPROCESSED FILES
-GRAPH_INDEX_DIR = os.environ.get("GRAPH_INDEX_DIR")
-BM25_INDEX_DIR = os.environ.get("BM25_INDEX_DIR")
-assert GRAPH_INDEX_DIR != ''
-assert BM25_INDEX_DIR != ''
+GRAPH_INDEX_DIR = os.environ.get("GRAPH_INDEX_DIR", "index_data/graph_index")
+BM25_INDEX_DIR = os.environ.get("BM25_INDEX_DIR", "index_data/bm25_index")
 
 
 def find_matching_files_from_list(file_list, file_pattern):
@@ -32,6 +29,10 @@ def find_matching_files_from_list(file_list, file_pattern):
 
 
 def get_meta_data(target_id, dataset:str="princeton-nlp/SWE-bench_Lite", split:str = "test"):
+    try:
+        from datasets import load_dataset
+    except ImportError as exc:
+        raise RuntimeError("HuggingFace datasets is not installed. SWE-bench helpers are disabled.") from exc
     swe_bench_data = load_dataset(dataset, split=split)
     bench_data = [x for x in swe_bench_data if x["instance_id"] == target_id][0]
     return bench_data
@@ -72,5 +73,4 @@ def extract_file_to_code(raw_content: str):
     file_to_code = {filename: code for filename, code in matches}
 
     return file_to_code
-
 

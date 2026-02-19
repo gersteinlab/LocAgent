@@ -53,8 +53,16 @@ def build_code_retriever_from_repo(repo_path,
         test_patterns = [
             '**/test/**',
             '**/tests/**',
+            '**/__tests__/**',
             '**/test_*.py',
             '**/*_test.py',
+            '**/*.test.ts',
+            '**/*.spec.ts',
+            '**/*.test.js',
+            '**/*.spec.js',
+            '**/*Test.java',
+            '**/src/test/**',
+            '**/*_test.go',
         ]
         category = (
             'test'
@@ -76,10 +84,18 @@ def build_code_retriever_from_repo(repo_path,
             '**/tests/**',
             '**/test_*.py',
             '**/*_test.py',
+            '**/__tests__/**',
+            '**/*.test.ts',
+            '**/*.spec.ts',
+            '**/*.test.js',
+            '**/*.spec.js',
+            '**/*Test.java',
+            '**/src/test/**',
+            '**/*_test.go',
         ],
         file_metadata=file_metadata_func,
         filename_as_id=True,
-        required_exts=['.py'],  # TODO: Shouldn't be hardcoded and filtered
+        required_exts=['.py', '.js', '.jsx', '.ts', '.tsx', '.java', '.go', '.rs', '.cs'],
         recursive=True,
     )
     docs = reader.load_data()
