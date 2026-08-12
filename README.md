@@ -7,6 +7,11 @@
    | 🤗&nbsp; <a href="https://huggingface.co/czlll/Qwen2.5-Coder-32B-CL" target="_blank">Qwen2.5-Coder-32B-CL</a>
 </p>
 
+> [!NOTE]
+> [CodeNib](https://github.com/sysevol-ai/CodeNib) serves LocAgent's search and graph-navigation tools from reusable, manifest-backed symbol-graph and BM25 indexes, without building a separate LocAgent index. The CodeNib integration starts from a prepared `repo_manifest.json` and runs LocAgent's localization policy over these indexes; model training and the original reproduction pipeline remain in this repository.
+>
+> [Documentation](https://docs.codenib.ai/agent_integrations/#locagent) · [Adapter](https://github.com/sysevol-ai/CodeNib/blob/main/codenib/clients/locagent_agent.py) · [Provider](https://github.com/sysevol-ai/CodeNib/blob/main/codenib/integrations/locagent.py)
+
 
 ## ℹ️ Overview
 We introduce **LocAgent**, a framework that addresses code localization through graph-based representation.
