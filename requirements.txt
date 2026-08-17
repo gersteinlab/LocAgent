@@ -82,7 +82,7 @@ multiprocess==0.70.16
 mypy-extensions==1.0.0
 nest_asyncio==1.6.0
 networkx==3.4.2
-nltk==3.9.1
+nltk==3.10.0
 numpy==1.26.4
 nvidia-cublas-cu12==12.4.5.8
 nvidia-cuda-cupti-cu12==12.4.127
